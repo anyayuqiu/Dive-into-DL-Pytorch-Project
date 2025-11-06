@@ -2,8 +2,13 @@ from matplotlib import pyplot as plt
 import torchvision
 import torchvision.transforms as transforms
 import torch
+from torch import nn
 import time
 import sys
+import torch.nn.functional as F
+import zipfile
+import random
+
 def use_svg_display():
     plt.rcParams['savefig.format'] = 'svg'
 
@@ -158,3 +163,100 @@ def train_ch5(net, train_iter, test_iter, batch_size, optimizer, device, num_epo
             batch_count += 1
         test_acc = evaluate_accuracy1(test_iter, net)
         print('epoch %d, loss %.4f, train acc %.3f, test acc %.3f,time % .1f sec'% (epoch + 1, train_l_sum / batch_count ,train_acc_sum / n, test_acc, time.time() - start))
+
+
+def load_data_fashion_mnist1(batch_size, resize=None, root='~/Datasets/FashionMNIST'):
+    """Download the fashion mnist dataset and then load into memory."""
+    trans = []
+    if resize:
+        trans.append(torchvision.transforms.Resize(size=resize))
+    trans.append(torchvision.transforms.ToTensor())
+    transform = torchvision.transforms.Compose(trans)
+    mnist_train = torchvision.datasets.FashionMNIST(root=root, train=True, download=True, transform=transform)
+    mnist_test = torchvision.datasets.FashionMNIST(root=root, train=False, download=True, transform=transform)
+    train_iter = torch.utils.data.DataLoader(mnist_train, batch_size=batch_size, shuffle=True, num_workers=0)
+    test_iter = torch.utils.data.DataLoader(mnist_test, batch_size=batch_size, shuffle=False, num_workers=0)
+    return train_iter, test_iter
+
+
+# 已保存在d2lzh_pytorch
+class GlobalAvgPool2d(nn.Module):
+ # 全局平均池化层可通过将池化窗⼝口形状设置成输⼊入的⾼高和宽实现
+    def __init__(self):
+        super(GlobalAvgPool2d, self).__init__()
+    def forward(self, x):
+        return nn.functional.avg_pool2d(x, kernel_size=x.size()[2:])
+
+class Residual(nn.Module):
+    def __init__(self, in_channels, out_channels, use_1x1conv=False, stride=1):
+        super(Residual, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=stride)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride)
+        else:
+            self.conv3 = None
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        if self.conv3:
+            X = self.conv3(X)
+        return F.relu(Y + X)
+
+
+
+def load_data_jay_lyrics():
+    with zipfile.ZipFile('data/jaychou_lyrics.txt.zip') as zin:
+        with zin.open('jaychou_lyrics.txt') as f:
+            corpus_chars = f.read().decode('utf-8')
+
+    corpus_chars = corpus_chars.replace('\n', ' ').replace('\r', ' ')
+    corpus_chars = corpus_chars[0:10000]
+
+    # print(corpus_chars[:40])
+
+    idx_to_char = list(set(corpus_chars))
+    char_to_idx = dict([(char, i) for i, char in enumerate(idx_to_char)])
+    vocab_size = len(char_to_idx)
+
+    return corpus_chars, idx_to_char, char_to_idx, vocab_size
+
+
+# 本函数已保存在d2lzh_pytorch包中⽅方便便以后使⽤用
+def data_iter_random(corpus_indices, batch_size, num_steps, device=None):
+    # 减1是因为输出的索引x是相应输⼊入的索引y加1
+    num_examples = (len(corpus_indices) - 1) // num_steps
+    epoch_size = num_examples // batch_size
+    example_indices = list(range(num_examples))
+    random.shuffle(example_indices)
+    # 返回从pos开始的⻓长为num_steps的序列
+    def _data(pos):
+        return corpus_indices[pos: pos + num_steps]
+    if device is None:
+       device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    for i in range(epoch_size):
+        # 每次读取batch_size个随机样本
+        i = i * batch_size
+        batch_indices = example_indices[i: i + batch_size]
+        X = [_data(j * num_steps) for j in batch_indices]
+        Y = [_data(j * num_steps + 1) for j in batch_indices]
+        yield torch.tensor(X, dtype=torch.float32, device=device),torch.tensor(Y, dtype=torch.float32, device=device)
+
+
+def data_iter_consecutive(corpus_indices, batch_size, num_steps, device=None):
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    corpus_indices = torch.tensor(corpus_indices, dtype=torch.float32, device=device)
+    data_len = len(corpus_indices)
+    batch_len = data_len // batch_size
+    indices = corpus_indices[0: batch_size*batch_len].view(batch_size, batch_len)
+    epoch_size = (batch_len - 1) // num_steps
+    for i in range(epoch_size):
+        i = i * num_steps
+        X = indices[:, i: i + num_steps]
+        Y = indices[:, i + 1: i + num_steps + 1]
+        yield X, Y
