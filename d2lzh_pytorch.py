@@ -44,6 +44,7 @@ def show_fashion_mnist(images, labels):
 
 mnist_train = torchvision.datasets.FashionMNIST(root='~/Datasets/FashionMNIST', train=True, download=True, transform=transforms.ToTensor())
 mnist_test = torchvision.datasets.FashionMNIST(root='~/Dastsets/FashionMNIST', train=False, download=True, transform=transforms.ToTensor())
+
 def load_data_fashion_mnist(batch_size):
     if sys.platform.startswith('win'):
         num_workers = 0
@@ -223,7 +224,7 @@ def load_data_jay_lyrics():
     char_to_idx = dict([(char, i) for i, char in enumerate(idx_to_char)])
     vocab_size = len(char_to_idx)
     corpus_indices = [char_to_idx[char] for char in corpus_chars]
-    return  corpus_indices, idx_to_char, char_to_idx, vocab_size
+    return corpus_indices, char_to_idx, idx_to_char, vocab_size
 
 
 # 本函数已保存在d2lzh_pytorch包中⽅方便便以后使⽤用
@@ -401,3 +402,54 @@ def predict_rnn_pytorch(prefix, num_chars, model, vocab_size, device, idx_to_cha
         else:
             output.append(int(Y.argmax(dim=1).item()))
     return ''.join([idx_to_char[i] for i in output])
+
+
+# 本函数已保存在d2lzh_pytorch包中⽅方便便以后使⽤用
+def train_and_predict_rnn_pytorch(model, num_hiddens, vocab_size, device,
+                                  corpus_indices, idx_to_char, char_to_idx,
+                                  num_epochs, num_steps, lr, clipping_theta,
+                                  batch_size, pred_period, pred_len, prefixes):
+    loss = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model.to(device)
+    state = None
+
+    for epoch in range(num_epochs):
+        l_sum, n, start = 0.0, 0, time.time()
+        data_iter = data_iter_consecutive(corpus_indices, batch_size, num_steps, device)  # 相邻采样
+
+        for X, Y in data_iter:
+            if state is not None:
+                # 使⽤用detach函数从计算图分离隐藏状态, 这是为了
+                # 使模型参数的梯度计算只依赖⼀次迭代读取的⼩批量序列(防⽌梯度计算开销太⼤)
+                if isinstance(state, tuple):  # LSTM, state:(h, c)
+                    state = (state[0].detach(), state[1].detach())
+                else:
+                    state = state.detach()
+
+            (output, state) = model(X, state)  # output: 形状为(num_steps * batch_size, vocab_size)
+
+            # Y的形状是(batch_size, num_steps)，转置后再变成⻓度为
+            # batch * num_steps 的向量，这样跟输出的⾏⼀⼀对应
+            y = torch.transpose(Y, 0, 1).contiguous().view(-1)
+            l = loss(output, y.long())
+
+            optimizer.zero_grad()
+            l.backward()
+            # 梯度裁剪
+            grad_clipping(model.parameters(), clipping_theta, device)
+            optimizer.step()
+            l_sum += l.item() * y.shape[0]
+            n += y.shape[0]
+
+        try:
+            perplexity = math.exp(l_sum / n)
+        except OverflowError:
+            perplexity = float('inf')
+
+        if (epoch + 1) % pred_period == 0:
+            print('epoch %d, perplexity %f, time %.2f sec' % (
+                epoch + 1, perplexity, time.time() - start))
+            for prefix in prefixes:
+                print(' -', predict_rnn_pytorch(
+                    prefix, pred_len, model, vocab_size, device, idx_to_char, char_to_idx))
