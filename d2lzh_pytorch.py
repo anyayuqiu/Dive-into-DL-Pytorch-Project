@@ -453,3 +453,117 @@ def train_and_predict_rnn_pytorch(model, num_hiddens, vocab_size, device,
             for prefix in prefixes:
                 print(' -', predict_rnn_pytorch(
                     prefix, pred_len, model, vocab_size, device, idx_to_char, char_to_idx))
+
+def show_images(imgs, num_rows, num_cols, scale=2):
+    figsize = (num_cols * scale, num_rows * scale)
+    _, axes = plt.subplots(num_rows, num_cols, figsize=figsize)
+    for i in range(num_rows):
+        for j in range(num_cols):
+            axes[i][j].imshow(imgs[i * num_cols + j])
+            axes[i][j].axes.get_xaxis().set_visible(False)
+            axes[i][j].axes.get_yaxis().set_visible(False)
+    return axes
+
+
+def train(train_iter, test_iter, net, loss, optimizer, device, num_epochs):
+    net = net.to(device)
+    print("training on ", device)
+    batch_count = 0
+    for epoch in range(num_epochs):
+        train_l_sum, train_acc_sum, n, start = 0.0, 0.0, 0, time.time()
+        for X, y in train_iter:
+            X = X.to(device)
+            y = y.to(device)
+            y_hat = net(X)
+            l = loss(y_hat, y)
+            optimizer.zero_grad()
+            l.backward()
+            optimizer.step()
+            train_l_sum += l.cpu().item()
+            train_acc_sum += (y_hat.argmax(dim=1) == y).sum().cpu().item()
+            n += y.shape[0]
+            batch_count += 1
+        test_acc = evaluate_accuracy1(test_iter, net)
+        print('epoch %d, loss %.4f, train acc %.3f, test acc %.3f, time %.1f sec'
+              % (epoch + 1, train_l_sum / batch_count, train_acc_sum / n, test_acc, time.time() - start))
+
+
+import torchtext.vocab as Vocab
+import collections
+import os
+from tqdm import tqdm
+# 本函数已保存在d2lzh_pytorch包中方便以后使用
+def read_imdb(folder='train', data_root="../data/aclImdb"):
+    data = []
+    for label in ['pos', 'neg']:
+        folder_name = os.path.join(data_root, folder, label)
+        for file in tqdm(os.listdir(folder_name)):
+            with open(os.path.join(folder_name, file), 'rb') as f:
+                review = f.read().decode('utf-8').replace('\n', '').lower()
+                data.append([review, 1 if label == 'pos' else 0])
+    random.shuffle(data)
+    return data
+
+
+# 本函数已保存在d2lzh_pytorch包中方便以后使用
+def get_tokenized_imdb(data):
+    def tokenizer(text):
+        return [tok.lower() for tok in text.split(' ')]
+
+    return [tokenizer(review) for review, _ in data]
+
+
+# 本函数已保存在d2lzh_pytorch包中方便以后使用
+def get_vocab_imdb(data):
+    tokenized_data = get_tokenized_imdb(data)
+    counter = collections.Counter([tk for st in tokenized_data for tk in st])
+
+    # 创建词汇表，添加特殊token
+    vocab = Vocab.vocab(counter, min_freq=5)
+    vocab.insert_token("<pad>", 0)  # 填充标记
+    vocab.insert_token("<unk>", 1)  # 未知词标记
+    vocab.set_default_index(vocab["<unk>"])  # 设置默认索引为<unk>
+
+    return vocab
+
+# 本函数已保存在d2lzh_torch包中方便以后使用
+def preprocess_imdb(data, vocab):
+    max_l = 500  # 将每条评论通过截断或者补0，使得长度变成500
+
+    def pad(x):
+        return x[:max_l] if len(x) > max_l else x + [0] * (max_l - len(x))
+
+    tokenized_data = get_tokenized_imdb(data)
+
+    # 使用vocab直接映射
+    features = torch.tensor([pad([vocab[word] for word in words])
+                             for words in tokenized_data])
+    labels = torch.tensor([score for _, score in data])
+    return features, labels
+
+# 本函数已保存在d2lzh_torch包中方便以后使用
+def load_pretrained_embedding(words, pretrained_vocab):
+    """从预训练好的vocab中提取出words对应的词向量"""
+    embed = torch.zeros(len(words), pretrained_vocab.vectors[0].shape[0])  # 初始化为0
+    oov_count = 0  # out of vocabulary
+
+    for i, word in enumerate(words):
+        try:
+            idx = pretrained_vocab.stoi[word]
+            embed[i, :] = pretrained_vocab.vectors[idx]
+        except KeyError:
+            oov_count += 1
+
+    if oov_count > 0:
+        print("There are %d oov words." % oov_count)
+
+    return embed
+
+# 本函数已保存在d2lzh_pytorch包中⽅方便便以后使⽤用
+def predict_sentiment(net, vocab, sentence):
+    """sentence是词语的列列表"""
+    device = list(net.parameters())[0].device
+    sentence = torch.tensor([vocab[word] for word in sentence],
+                            device=device)
+    label = torch.argmax(net(sentence.view((1, -1))), dim=1)
+    return 'positive' if label.item() == 1 else 'negative'

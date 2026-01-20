@@ -1,4 +1,4 @@
-%matplotlib inline
+
 import torch
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
@@ -10,18 +10,17 @@ import os
 import sys
 sys.path.append("..")
 import d2lzh_pytorch as d2l
-device = torch.device('cuda' if torch.cuda.is_available() else'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 #1 获取数据集
-data_dir = '/S1/CSCL/tangss/Datasets'
+data_dir = '../data'
 os.listdir(os.path.join(data_dir, "hotdog")) # ['train', 'test']
 train_imgs = ImageFolder(os.path.join(data_dir, 'hotdog/train'))
 test_imgs = ImageFolder(os.path.join(data_dir, 'hotdog/test'))
 
 hotdogs = [train_imgs[i][0] for i in range(8)]
 not_hotdogs = [train_imgs[-i - 1][0] for i in range(8)]
-d2l.show_images(hotdogs + not_hotdogs, 2, 8, scale=1.4);
-
+d2l.show_images(hotdogs + not_hotdogs, 2, 8, scale=1.4)
 
 # 指定RGB三个通道的均值和⽅方差来将图像通道归⼀一化
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=

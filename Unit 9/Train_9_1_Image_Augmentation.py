@@ -96,7 +96,7 @@ def train(train_iter, test_iter, net, loss, optimizer, device, num_epochs):
 
 
 def train_with_data_aug(train_augs, test_augs, lr=0.001):
-    batch_size, net = 256, d2l.resnet18(10)
+    batch_size, net = 256, d2l.Residual()
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     loss = torch.nn.CrossEntropyLoss()
     train_iter = load_cifar10(True, train_augs, batch_size)
